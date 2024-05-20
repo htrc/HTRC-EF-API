@@ -11,6 +11,7 @@ trait EfRepository {
   def hasVolume(id: VolumeId): Future[Boolean]
   def getVolume(id: VolumeId, withPos: Boolean = true, fields: List[String] = List.empty): Future[JsObject]
   def getVolumes(ids: IdSet, withPos: Boolean = true, fields: List[String] = List.empty): Future[List[JsObject]]
+  def getVolumesAggregated(ids: IdSet, withPos: Boolean = false, fields: List[String] = List.empty): Future[List[JsObject]]
   def getVolumePages(id: VolumeId, pageSeqs: Option[PageSet] = None, withPos: Boolean = true, fields: List[String] = List.empty): Future[JsObject]
 
   def getVolumeMetadata(id: VolumeId, fields: List[String] = List.empty): Future[JsObject]

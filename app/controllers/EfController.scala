@@ -102,6 +102,20 @@ class EfController @Inject()(efRepository: EfRepository,
       }
     }
 
+  def getWorksetVolumesAggregated(@ApiParam(value = "the workset ID", required = true) wid: WorksetId,
+                                  @ApiParam(value = "comma-separated list of fields to return") fields: Option[String]): Action[AnyContent] = {
+    //TODO: Add query parameter to specify whether to include POS information if that data becomes available in the future
+    Action.async { implicit req =>
+      render.async {
+        case Accepts.Json() =>
+          efRepository
+            .getWorkset(wid)
+            .flatMap(workset => efRepository.getVolumesAggregated(workset.htids, withPos = false, fields.map(tokenize(_)).getOrElse(List.empty)))
+            .map(WrappedResponse(_))
+      }
+    }
+  }
+
   def getWorksetVolumesMetadata(@ApiParam(value = "the workset ID", required = true) wid: WorksetId,
                                 @ApiParam(value = "comma-separated list of fields to return") fields: Option[String]): Action[AnyContent] =
     Action.async { implicit req =>
