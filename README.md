@@ -26,6 +26,10 @@ $DEPLOY_DIR/bin/htrc-extractedfeatures-api -Dhttp.address=HOST -Dhttp.port=PORT 
 ```
 where `HOST` is the desired hostname or IP to bind to, and `PORT` is the desired port to run on.
 
+# Docker
+Create docker image and publish it to the docker repository(docker.htrc.illinois.edu)
+`sbt docker:publish`
+
 # API
 
 https://htrc.stoplight.io/docs/ef-api
