@@ -9,6 +9,7 @@ import repo.models._
 
 import java.time.Instant
 import javax.inject.{Inject, Singleton}
+import scala.collection.mutable
 
 // Reactive Mongo imports
 import play.modules.reactivemongo.{ReactiveMongoApi, ReactiveMongoComponents}
@@ -57,133 +58,49 @@ class EfRepositoryMongoImpl @Inject()(val reactiveMongoApi: ReactiveMongoApi)
       case _ => throw VolumeNotFoundException(id)
     }
 
-  //db.getCollection("ef").aggregate([
-  //    {
-  //        $match: {
-  //            htid: { $in: ['hvd.32044019369404'] }
-  //        }
-  //    },
-  //    {
-  //        $lookup: {
-  //            from: 'metadata',
-  //            let: { htid: '$htid' },
-  //            pipeline: [
-  //                {
-  //                    $match: {
-  //                        $expr: {
-  //                            $eq: ['$htid', '$$htid']
-  //                        }
-  //                    }
-  //                },
-  //                { $project: { _id: 0 } },
-  //                { $replaceRoot: { newRoot: '$metadata' } }
-  //            ],
-  //            as: 'metadata'
-  //        }
-  //    },
-  //    {
-  //        $unwind: '$metadata'
-  //    },
-  //    {
-  //        $lookup: {
-  //            from: 'features',
-  //            let: { htid: '$htid' },
-  //            pipeline: [
-  //                {
-  //                    $match: {
-  //                        $expr: {
-  //                            $eq: ['$htid', '$$htid']
-  //                        }
-  //                    }
-  //                },
-  //                { $project: { _id: 0 } },
-  //                { $replaceRoot: { newRoot: '$features' } }
-  //            ],
-  //            as: 'features'
-  //        }
-  //    },
-  //    {
-  //        $unwind: '$features'
-  //    },
-  //    {
-  //        $lookup: {
-  //            from: 'pages',
-  //            let: { htid: '$htid' },
-  //            pipeline: [
-  //                {
-  //                    $match: {
-  //                        $expr: {
-  //                            $eq: ['$htid', '$$htid']
-  //                        }
-  //                    }
-  //                },
-  //                { $project: { _id: 0 } },
-  //                { $replaceRoot: { newRoot: '$page' } }
-  //            ],
-  //            as: 'features.pages'
-  //        }
-  //    },
-  //    {
-  //        $project: {
-  //            _id: 0
-  //        }
-  //    }
-  //])
   protected def getVolumesWithPos(ids: IdSet, fields: List[String] = List.empty): Future[List[JsObject]] = {
-    //require(ids.nonEmpty)
-
-    val projFields = BSONDocument(fields.map(f => f -> BSONInteger(1)))
+    val newFields = fields.map(f => f.replaceAll("features\\.pages", "page"))
+    val projFields =
+      if (fields.nonEmpty) Some(BSONDocument(newFields.map(_ -> BSONInteger(1))) ++ ("htid" -> BSONInteger(1)))
+      else None
 
     for {
-      col <- efCol; features <- featuresCol; metadata <- metadataCol; pages <- pagesCol
-      volumes <- col
-        .aggregateWith[JsObject]() { framework =>
-          import framework._
-
-          val query = if (ids.isEmpty) document() else document("htid" -> document("$in" -> ids))
-
-          List(
-            Match(query),
-            LookupPipeline(
-              from = metadata.name,
-              let = document("htid" -> "$htid"),
-              pipeline = List(
-                Match(document("$expr" -> document("$eq" -> List("$htid", """$$htid""")))),
-                Project(document("_id" -> 0)),
-                ReplaceRootField("metadata")
-              ),
-              as = "metadata"
-            ),
-            UnwindField("metadata"),
-            LookupPipeline(
-              from = features.name,
-              let = document("htid" -> "$htid"),
-              pipeline = List(
-                Match(document("$expr" -> document("$eq" -> List("$htid", """$$htid""")))),
-                Project(document("_id" -> 0)),
-                ReplaceRootField("features")
-              ),
-              as = "features"
-            ),
-            UnwindField("features"),
-            LookupPipeline(
-              from = pages.name,
-              let = document("htid" -> "$htid"),
-              pipeline = List(
-                Match(document("$expr" -> document("$eq" -> List("$htid", """$$htid""")))),
-                Project(document("_id" -> 0)),
-                ReplaceRootField("page")
-              ),
-              as = "features.pages"
-            ),
-            Project(document("_id" -> 0) ++ projFields)
-          )
-        }
-        .collect[List]()
-    } yield volumes
+      efData <- efCol.map(_.find(document("htid" -> document("$in" -> ids)), projFields).cursor[JsObject]()).flatMap(_.collect[List]())
+      featuresData <- featuresCol.map(_.find(document("htid" -> document("$in" -> ids)), projFields).cursor[JsObject]()).flatMap(_.collect[List]())
+      metaData <- metadataCol.map(_.find(document("htid" -> document("$in" -> ids)), projFields).cursor[JsObject]()).flatMap(_.collect[List]())
+      pagesData <- pagesCol.map(_.find(document("htid" -> document("$in" -> ids)), projFields).cursor[JsObject]()).flatMap(_.collect[List]())
+    }
+      yield {
+        val efDataMap = efData.map(o => (o \ "htid").as[String] -> o).toMap
+        val featuresDataMap = featuresData.map(o => (o \ "htid").as[String] -> o).toMap
+        val metaDataMap = metaData.map(o => (o \ "htid").as[String] -> o).toMap
+        val pagesDataMap = pagesData.map(o => (o \ "htid").as[String] -> o)
+          .foldLeft(Map.empty[String, mutable.ListBuffer[JsObject]].withDefaultValue(mutable.ListBuffer.empty)) {
+            case (map, (k, v)) => map(k) += v; map
+          }
+        ids.toList
+          .map { htid =>
+            val ef = efDataMap(htid)
+            var features = featuresDataMap(htid)
+            if (!newFields.exists(_.startsWith("features")) && newFields.exists(_.startsWith("page")))
+              features = Json.obj("features" -> Json.obj())
+            val metadata = metaDataMap(htid)
+            val pages = pagesDataMap(htid)
+            val thePages =
+              if (pages.forall(_.keys.contains("page")))
+                Json.obj(
+                  "pages" -> pages.map(_ \ "page").map(_.as[JsObject])
+                )
+              else Json.obj()
+            val addPagesTransform = (__ \ "features").json.update(__.json.put(thePages))
+            val result = ef ++ metadata - "_id" ++ features.transform(addPagesTransform).get
+            if (!fields.contains("htid")) result - "htid"
+            else result
+          }
+      }
   }
 
-  protected def getVolumeNoPos(id: VolumeId, fields: List[String] = List.empty): Future[JsObject] =
+    protected def getVolumeNoPos(id: VolumeId, fields: List[String] = List.empty): Future[JsObject] =
     getVolumesNoPos(Set(id), fields).map {
       case vol :: Nil => vol
       case _ => throw VolumeNotFoundException(id)
